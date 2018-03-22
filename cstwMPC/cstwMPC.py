@@ -4,7 +4,6 @@ A second stab / complete do-over of cstwMPC.  Steals some bits from old version.
 
 # Import the HARK library.  The assumption is that this code is in a folder
 # contained in the HARK folder. Also import ConsumptionSavingModel
-import pdb
 import sys 
 import os
 sys.path.insert(0, os.path.abspath('../'))
@@ -496,7 +495,6 @@ def calcStationaryAgeDstn(LivPrb,terminal_period):
     return AgeDstn
     
 
-
 # Set targets for K/Y and the Lorenz curve based on the data
 if Params.do_liquid:
     lorenz_target = np.array([0.0, 0.004, 0.025,0.117])
@@ -561,7 +559,6 @@ if Params.do_agg_shocks:
     EstimationEconomy.update()
     EstimationEconomy.makeAggShkHist()
     
-pdb.set_trace()
 # Estimate the model as requested
 if Params.run_estimation:
     # Choose the bounding region for the parameter search

@@ -1,5 +1,5 @@
 '''
-Growth and inequality in cstwMPC
+cstw and growth
 '''
 
 # Import the HARK library.  The assumption is that this code is in a folder
@@ -17,7 +17,7 @@ from HARKutilities import approxMeanOneLognormal, combineIndepDstns, approxUnifo
 from HARKsimulation import drawDiscrete
 from HARKcore import Market
 #from HARKparallel import multiThreadCommandsFake
-import ParamsBetaPointPYnw as Params
+#import ParamsBetaPointPYnw as Params
 import ConsIndShockModel as Model
 from ConsAggShockModel import CobbDouglasEconomy, AggShockConsumerType
 from scipy.optimize import golden, brentq
@@ -26,7 +26,6 @@ import matplotlib.pyplot as plt
 
 mystr = lambda number : "{:.3f}".format(number)
 
-# In this application we turn off aggregate shocks, so we just execute what's in the else branch
 #if Params.do_agg_shocks:
 #    EstimationAgentClass = AggShockConsumerType
 #    EstimationMarketClass = CobbDouglasEconomy
@@ -86,7 +85,7 @@ class cstwMPCmarket(EstimationMarketClass):
     reap_vars = ['aLvlNow','pLvlNow','MPCnow','TranShkNow','EmpNow','t_age']
     sow_vars  = [] # Nothing needs to be sent back to agents in the idiosyncratic shocks version
     const_vars = ['LorenzBool','ManyStatsBool']
-    track_vars = ['MaggNow','AaggNow','KtoYnow','Lorenz','LorenzLong','MPCall','MPCretired','MPCemployed','MPCunemployed','MPCbyIncome','MPCbyWealthRatio','HandToMouthPct']
+    track_vars = ['MaggNow','AaggNow','KtoYnow','Gini','Lorenz','LorenzLong','MPCall','MPCretired','MPCemployed','MPCunemployed','MPCbyIncome','MPCbyWealthRatio','HandToMouthPct']
     dyn_vars = [] # No dynamics in the idiosyncratic shocks version
     
     def __init__(self,**kwds):
@@ -171,12 +170,14 @@ class cstwMPCmarket(EstimationMarketClass):
             order = np.argsort(aLvl)
             aLvl = aLvl[order]
             CohortWeight = CohortWeight[order]
+            self.Gini = getGini(aLvl,weights=CohortWeight,presorted=True)
             wealth_shares = getLorenzShares(aLvl,weights=CohortWeight,percentiles=self.LorenzPercentiles,presorted=True)
             self.Lorenz = wealth_shares
             if ManyStatsBool:
                 self.LorenzLong = getLorenzShares(aLvl,weights=CohortWeight,percentiles=np.arange(0.01,1.0,0.01),presorted=True)                
         else:
             self.Lorenz = np.nan # Store nothing if we don't want Lorenz data
+            self.Gini = np.nan
             
         # Calculate a whole bunch of statistics if requested
         if ManyStatsBool:
@@ -329,6 +330,10 @@ class cstwMPCmarket(EstimationMarketClass):
         -------
         None
         '''
+        
+        # Calculate Gini coefficient
+        Gini = np.mean(self.Gini_hist[self.ignore_periods:])
+        
         # Calculate MPC overall and by subpopulations
         MPCall = np.mean(self.MPCall_hist[self.ignore_periods:])
         MPCemployed = np.mean(self.MPCemployed_hist[self.ignore_periods:])
@@ -340,16 +345,23 @@ class cstwMPCmarket(EstimationMarketClass):
         
         LorenzSim = np.hstack((np.array(0.0),np.mean(np.array(self.LorenzLong_hist)[self.ignore_periods:,:],axis=0),np.array(1.0)))
         LorenzAxis = np.arange(101,dtype=float)
+        
+        fig = plt.figure()
         plt.plot(LorenzAxis,self.LorenzData,'-k',linewidth=1.5)
         plt.plot(LorenzAxis,LorenzSim,'--k',linewidth=1.5)
         plt.xlabel('Income percentile',fontsize=12)
         plt.ylabel('Cumulative wealth share',fontsize=12)
         plt.ylim([-0.02,1.0])
         plt.show()
+        if spec_name is not None:
+            fig.savefig('./FiguresGrowth/' + spec_name + '.pdf')
+            
+        
         
         # Make a string of results to display
         results_string = 'Estimate is center=' + str(self.center_estimate) + ', spread=' + str(self.spread_estimate) + '\n'
         results_string += 'Lorenz distance is ' + str(self.LorenzDistance) + '\n'
+        results_string += 'Average Gini coefficient is ' + mystr(Gini) + '\n'
         results_string += 'Average MPC for all consumers is ' + mystr(MPCall) + '\n'
         results_string += 'Average MPC in the top percentile of W/Y is ' + mystr(MPCbyWealthRatio[0]) + '\n'
         results_string += 'Average MPC in the top decile of W/Y is ' + mystr(MPCbyWealthRatio[1]) + '\n'
@@ -378,7 +390,7 @@ class cstwMPCmarket(EstimationMarketClass):
         
         # Save results to disk
         if spec_name is not None:
-            with open('./Results/' + spec_name + 'Results.txt','w') as f:
+            with open('./ResultsGrowth/' + spec_name + '.txt','w') as f:
                 f.write(results_string)
                 f.close()
         
@@ -498,20 +510,46 @@ def calcStationaryAgeDstn(LivPrb,terminal_period):
     AgeDstn = (x/np.sum(x))
     return AgeDstn
 
-def doResults(do_param_dist=False, do_lifecycle=False, do_liquid = False):
-    '''
-    Does results for different specifications
-    '''
+def getGini(data,weights=None,presorted=False):
+    n = data.size
+    if weights is None: # Set equiprobable weights if none were given
+        weights = np.ones(n)
     
-    # Update Params from input
-    Params.do_param_dist = do_param_dist
-    Params.do_lifecycle = do_lifecycle
-    Params.do_liquid = do_liquid
-    param_dist = 'Dist' if do_param_dist else 'Point'
-    lifecycle = 'LC' if do_lifecycle else 'PY'
-    liquid = 'liq' if do_liquid else 'nw'
-    Params.spec_name = 'Beta' + param_dist + lifecycle + liquid
+    if presorted: # Sort the data if it is not already
+        data_sorted = data
+        weights_sorted = weights
+    else:
+        order = np.argsort(data)
+        data_sorted = data[order]
+        weights_sorted = weights[order]
     
+    wealth_sorted = data_sorted*weights_sorted
+    index = np.arange(1, n+1, 1)
+    gini = np.sum((2*index-n-1)*wealth_sorted)/(n*np.sum(wealth_sorted))
+    return gini
+    
+    
+###############################################################################
+###############################################################################
+
+## Loop over parameter specifications
+#spec_list = ['ParamsBetaDistLCliq',
+#             'ParamsBetaDistLCnw',
+#             'ParamsBetaDistPYliq',
+#             'ParamsBetaDistPYnw',
+#             'ParamsBetaPointLCliq',
+#             'ParamsBetaPointLCnw',
+#             'ParamsBetaPointPYliq',
+#             'ParamsBetaPointPYnw']
+
+# If running on mac, use just beta-point specification(s)
+spec_list = ['ParamsBetaPointLCnw',
+             'ParamsBetaPointPYnw']
+
+for spec in spec_list:
+    exec('import ' + spec + ' as Params')
+
+
     # Set targets for K/Y and the Lorenz curve based on the data
     if Params.do_liquid:
         lorenz_target = np.array([0.0, 0.004, 0.025,0.117])
@@ -541,11 +579,10 @@ def doResults(do_param_dist=False, do_lifecycle=False, do_liquid = False):
             EstimationAgentList.append(deepcopy(HighschoolType))
             EstimationAgentList.append(deepcopy(CollegeType))
     else:
-    #    if Params.do_agg_shocks:
-    #        PerpetualYouthType = cstwMPCagent(**Params.init_agg_shocks)
-    #    else:
-    #        PerpetualYouthType = cstwMPCagent(**Params.init_infinite)
-        PerpetualYouthType = cstwMPCagent(**Params.init_infinite)
+        if Params.do_agg_shocks:
+            PerpetualYouthType = cstwMPCagent(**Params.init_agg_shocks)
+        else:
+            PerpetualYouthType = cstwMPCagent(**Params.init_infinite)
         PerpetualYouthType.AgeDstn = np.array(1.0)
         EstimationAgentList = []
         for n in range(Params.pref_type_count):
@@ -554,7 +591,7 @@ def doResults(do_param_dist=False, do_lifecycle=False, do_liquid = False):
     # Give all the AgentTypes different seeds
     for j in range(len(EstimationAgentList)):
         EstimationAgentList[j].seed = j
-    
+        
     # Make an economy for the consumers to live in
     EstimationEconomy = cstwMPCmarket(**Params.init_market)
     EstimationEconomy.agents = EstimationAgentList
@@ -572,11 +609,11 @@ def doResults(do_param_dist=False, do_lifecycle=False, do_liquid = False):
         EstimationEconomy.TypeWeight = [1.0]
         EstimationEconomy.act_T = Params.T_sim_PY
         EstimationEconomy.ignore_periods = Params.ignore_periods_PY
-    #if Params.do_agg_shocks:
-    #    EstimationEconomy(**Params.aggregate_params)
-    #    EstimationEconomy.update()
-    #    EstimationEconomy.makeAggShkHist()
-    
+    if Params.do_agg_shocks:
+        EstimationEconomy(**Params.aggregate_params)
+        EstimationEconomy.update()
+        EstimationEconomy.makeAggShkHist()
+        
     # Estimate the model as requested
     if Params.run_estimation:
         # Choose the bounding region for the parameter search
@@ -628,4 +665,3 @@ def doResults(do_param_dist=False, do_lifecycle=False, do_liquid = False):
         EstimationEconomy.spread_estimate = spread_estimate
         EstimationEconomy.showManyStats(Params.spec_name)
         
-doResults(do_param_dist=True)
